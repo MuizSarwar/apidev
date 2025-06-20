@@ -2,11 +2,11 @@
 #import necessary libraries
 
 from fastapi import FastAPI,HTTPException, status, Depends
-from pydantic import BaseModel
 from . import models
 from .database import engine, get_db 
 from sqlalchemy.orm import Session
-import datetime 
+from . import schema
+
 
 
 # Create tables in the database if they don't exist
@@ -16,26 +16,6 @@ models.Base.metadata.create_all(bind=engine)
 # Initialize the FastAPI application
 app = FastAPI()
 
-
-
-# Define a Pydantic model for the post data
-class Post(BaseModel):
-    title: str
-    content: str
-    published: bool = True  
-
-
-
-# Create a Pydantic model for the response data(response validation and serialization)
-class PostResponse(BaseModel):
-    id: int
-    title: str
-    content: str
-    published: bool
-    created: datetime.datetime
-
-    class Config:
-        orm_mode = True
 
 
 
@@ -49,7 +29,7 @@ def home():
 
 
 # create get endpoint for all posts page
-@app.get("/posts", response_model=list[PostResponse])  
+@app.get("/posts", response_model=list[schema.PostResponse])  
 def get_posts(db: Session = Depends(get_db)):
     posts = db.query(models.Post).all()  
     return posts
@@ -58,7 +38,7 @@ def get_posts(db: Session = Depends(get_db)):
 
 
 # create get endpoint for latest posts
-@app.get("/posts/latest", response_model=PostResponse)  
+@app.get("/posts/latest", response_model=schema.PostResponse)  
 def get_latest_posts(db: Session = Depends(get_db)):
     latest_post = db.query(models.Post).order_by(models.Post.created.desc()).first()  
     
@@ -71,7 +51,7 @@ def get_latest_posts(db: Session = Depends(get_db)):
 
 
 # create get endpoint for a specific post
-@app.get("/posts/{post_id}", response_model=PostResponse)
+@app.get("/posts/{post_id}", response_model=schema.PostResponse)
 def get_post(post_id: int , db: Session = Depends(get_db)):
     post = db.query(models.Post).filter(models.Post.id == post_id).first()  
 
@@ -83,8 +63,8 @@ def get_post(post_id: int , db: Session = Depends(get_db)):
 
 
 #create post endpoint for creating a new post
-@app.post("/posts",status_code=status.HTTP_201_CREATED,response_model=PostResponse)
-def create_post(post: Post,db: Session = Depends(get_db)):
+@app.post("/posts",status_code=status.HTTP_201_CREATED,response_model=schema.PostResponse)
+def create_post(post: schema.Post,db: Session = Depends(get_db)):
     try:
         new_post = models.Post(**post.dict())  
         db.add(new_post)  
@@ -102,8 +82,8 @@ def create_post(post: Post,db: Session = Depends(get_db)):
 
 
 # create put endpoint for updating a post
-@app.put("/posts/{post_id}",response_model=PostResponse)
-def update_post(post_id: int, updated_post: Post, db: Session = Depends(get_db)):
+@app.put("/posts/{post_id}",response_model=schema.PostResponse)
+def update_post(post_id: int, updated_post: schema.Post, db: Session = Depends(get_db)):
     
     try:
         post_query = db.query(models.Post).filter(models.Post.id == post_id)
