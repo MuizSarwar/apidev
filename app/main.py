@@ -1,42 +1,41 @@
 # FastAPI application with PostgreSQL connection and basic CRUD operations
 #import necessary libraries
 
-from fastapi import FastAPI,HTTPException, status
+from fastapi import FastAPI,HTTPException, status, Depends
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import time
+from . import models
+from .database import engine, get_db 
+from sqlalchemy.orm import Session
+import datetime 
+
+
+# Create tables in the database if they don't exist
+models.Base.metadata.create_all(bind=engine)  
 
 
 # Initialize the FastAPI application
 app = FastAPI()
 
 
+
 # Define a Pydantic model for the post data
 class Post(BaseModel):
     title: str
     content: str
-    published: bool = True  # Default value for published is True
+    published: bool = True  
 
 
 
+# Create a Pydantic model for the response data(response validation and serialization)
+class PostResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+    published: bool
+    created: datetime.datetime
 
-#connect to the database using psycopg and check if the connection is successful
-while True:
-    try:
-        conn = psycopg2.connect(
-            host="localhost",
-            database="apidev",
-            user="postgres",
-            password="tannu",
-            cursor_factory=RealDictCursor
-            )
-        cur = conn.cursor()
-        break  # If connection is successful, break the loop
-
-    except Exception as error:
-        print("Error connecting to the database:", error)
-        time.sleep(2)  # Wait for 2 seconds before retrying
+    class Config:
+        orm_mode = True
 
 
 
@@ -47,95 +46,102 @@ def home():
     return {"message": "Welcome to the Home Page!"}
 
 
+
+
 # create get endpoint for all posts page
-@app.get("/posts")
-def get_posts():
-    cur.execute("SELECT * FROM posts;")
-    posts = cur.fetchall()
-    return {"all posts ": posts}
+@app.get("/posts", response_model=list[PostResponse])  
+def get_posts(db: Session = Depends(get_db)):
+    posts = db.query(models.Post).all()  
+    return posts
+
+
 
 
 # create get endpoint for latest posts
-@app.get("/posts/latest")
-def get_latest_posts():
-    cur.execute("SELECT * FROM posts ORDER BY created DESC LIMIT 1;")
-    latest_post = cur.fetchone()
-    return {"latest post is ": latest_post}
+@app.get("/posts/latest", response_model=PostResponse)  
+def get_latest_posts(db: Session = Depends(get_db)):
+    latest_post = db.query(models.Post).order_by(models.Post.created.desc()).first()  
+    
+    if latest_post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No posts found")
+    
+    return latest_post
+
+
 
 
 # create get endpoint for a specific post
-@app.get("/posts/{post_id}")
-def get_post(post_id: int):
-    cur.execute("SELECT * FROM posts WHERE id = %s;", (post_id,))
-    post = cur.fetchone()
+@app.get("/posts/{post_id}", response_model=PostResponse)
+def get_post(post_id: int , db: Session = Depends(get_db)):
+    post = db.query(models.Post).filter(models.Post.id == post_id).first()  
 
-    if post is None:    # if post is not found, raise an exception
+    if post is None:    
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
-    
-    return {f"Here is the post with ID {post_id}!": post} #if post is found, return the post data
+    return post
+
 
 
 
 #create post endpoint for creating a new post
-@app.post("/posts")
-def create_post(post: Post):
+@app.post("/posts",status_code=status.HTTP_201_CREATED,response_model=PostResponse)
+def create_post(post: Post,db: Session = Depends(get_db)):
     try:
-        cur.execute(
-            "INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *;",
-            (post.title, post.content, post.published)
-        )
-        new_post = cur.fetchone()
-        conn.commit()  # Commit the transaction to save changes
-        return {"message": "Post created successfully!", "post": new_post}
+        new_post = models.Post(**post.dict())  
+        db.add(new_post)  
+        db.commit()  
+        db.refresh(new_post)  
+        return new_post  
+    
     except Exception as error:
-        conn.rollback()     # Rollback the transaction in case of error
+        db.rollback() 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating post: {error}")
 
 
+
+
+
+
 # create put endpoint for updating a post
-@app.put("/posts/{post_id}")
-def update_post(post_id: int, post: Post):
+@app.put("/posts/{post_id}",response_model=PostResponse)
+def update_post(post_id: int, updated_post: Post, db: Session = Depends(get_db)):
     
     try:
-        cur.execute("SELECT * FROM posts WHERE id = %s;", (post_id,))
-        existing_post = cur.fetchone()
-        if existing_post is None:
+        post_query = db.query(models.Post).filter(models.Post.id == post_id)
+        post = post_query.first()  
+
+        if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
-        cur.execute(
-            "UPDATE posts SET title = %s, content = %s, published = %s WHERE id = %s RETURNING *;",
-            (post.title, post.content, post.published, post_id)
-        )
-        updated_post = cur.fetchone()
-        conn.commit()  # Commit the transaction to save changes
-        return {"message": "Post updated successfully!", "post": updated_post}
+        
+        post.title = updated_post.title
+        post.content = updated_post.content
+        post.published = updated_post.published
+        db.commit()  
+        db.refresh(post)
+        return post
+        
     except Exception as error:
-        conn.rollback()    # Rollback the transaction in case of error
+        db.rollback() 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error updating post: {error}")
 
 
 
+
+
+
+
 # create delete endpoint for deleting a post
-@app.delete("/posts/{post_id}")
-def delete_post(post_id: int):
-    cur.execute("SELECT * FROM posts WHERE id = %s;", (post_id,))
-    post = cur.fetchone()
+@app.delete("/posts/{post_id}",status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(post_id: int,db: Session = Depends(get_db)):
+    post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if post is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
     try:
-        cur.execute("DELETE FROM posts WHERE id = %s RETURNING *;", (post_id,))
-        deleted_post = cur.fetchone()
-        conn.commit()  # Commit the transaction to save changes
-        return {"message": "Post deleted successfully!", "post": deleted_post}
+        db.delete(post)  
+        db.commit()  
+        
     except Exception as error:
-        conn.rollback()   # Rollback the transaction in case of error
+        db.rollback()  
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error deleting post: {error}")
 
 
-# Close the database connection when the application is shutting down
-@app.on_event("shutdown")
-def shutdown():
-    if conn:
-        cur.close()
-        conn.close()
-        print("Database connection closed.")
         
