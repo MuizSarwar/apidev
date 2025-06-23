@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+## This file defines the Pydantic models for request and response validation in a FastAPI application.
+
+from pydantic import BaseModel , EmailStr
 from datetime import datetime 
 
 
@@ -21,5 +23,25 @@ class PostResponse(BaseModel):
     created: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True  
 
+
+
+
+
+# Create a Pydantic model for the user data
+class userCreate(BaseModel):
+    email: EmailStr
+    password: str
+
+
+
+
+# Create a Pydantic model for the user response data
+class UserResponse(BaseModel):
+    id: int
+    email: EmailStr
+    created: datetime
+
+    class Config:
+        from_attributes = True
